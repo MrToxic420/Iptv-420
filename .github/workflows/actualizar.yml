@@ -8,18 +8,29 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   actualizar:
     runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Descargar repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Combinar listas
         run: |
           python - <<'PY'
           import urllib.request
+          import os
 
           urls = [
               "https://iptv-org.github.io/iptv/index.country.m3u",
@@ -31,39 +42,48 @@ jobs:
           vistos = set()
 
           for url in urls:
-              try:
-                  req = urllib.request.Request(
-                      url,
-                      headers={"User-Agent": "Mozilla/5.0"}
-                  )
-                  with urllib.request.urlopen(req, timeout=60) as r:
-                      contenido = r.read().decode("utf-8", errors="replace")
+              req = urllib.request.Request(
+                  url, headers={"User-Agent": "Mozilla/5.0"}
+              )
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  contenido = r.read().decode("utf-8", errors="replace")
 
-                  for linea in contenido.splitlines():
-                      linea = linea.strip()
-                      if not linea:
-                          continue
-                      if linea.startswith("#EXTINF"):
+              for linea in contenido.splitlines():
+                  linea = linea.strip()
+                  if not linea:
+                      continue
+                  if linea.startswith("#EXTINF"):
+                      canales.append(linea)
+                  elif not linea.startswith("#"):
+                      if linea not in vistos:
+                          vistos.add(linea)
                           canales.append(linea)
-                      elif not linea.startswith("#"):
-                          if linea not in vistos:
-                              vistos.add(linea)
-                              canales.append(linea)
-              except Exception as e:
-                  print(f"Error descargando {url}: {e}")
-                  raise
 
           with open("lista-combinada.m3u", "w", encoding="utf-8") as f:
+              f.write("#EXTM3U\n")
+              f.write("\n".join(canales) + "\n")
+
+          os.makedirs("_site", exist_ok=True)
+          with open("_site/lista-combinada.m3u", "w", encoding="utf-8") as f:
               f.write("#EXTM3U\n")
               f.write("\n".join(canales) + "\n")
 
           print(f"Lista generada con {len(vistos)} enlaces.")
           PY
 
-      - name: Publicar lista
+      - name: Guardar lista en el repositorio
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add lista-combinada.m3u
           git diff --cached --quiet || git commit -m "Actualizar lista IPTV"
           git push
+
+      - name: Subir archivo para Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: "_site"
+
+      - name: Publicar lista
+        id: deployment
+        uses: actions/deploy-pages@v4
