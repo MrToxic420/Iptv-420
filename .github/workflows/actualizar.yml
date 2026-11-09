@@ -31,44 +31,85 @@ jobs:
           python - <<'PY'
           import urllib.request
           import os
+          import re
 
-          urls = [
-              "https://iptv-org.github.io/iptv/index.country.m3u",
-              "https://iptv-org.github.io/iptv/categories/sports.m3u",
-              "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8"
+          fuentes = [
+              ("https://iptv-org.github.io/iptv/index.country.m3u", None),
+              ("https://iptv-org.github.io/iptv/categories/sports.m3u", "Deportes"),
+              ("https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8", None)
           ]
 
-          canales = []
+          salida = []
           vistos = set()
 
-          for url in urls:
-              req = urllib.request.Request(
-                  url, headers={"User-Agent": "Mozilla/5.0"}
-              )
-              with urllib.request.urlopen(req, timeout=60) as r:
-                  contenido = r.read().decode("utf-8", errors="replace")
+          for url, grupo_forzado in fuentes:
+              print("Descargando:", url)
 
-              for linea in contenido.splitlines():
+              req = urllib.request.Request(
+                  url,
+                  headers={"User-Agent": "Mozilla/5.0"}
+              )
+
+              with urllib.request.urlopen(req, timeout=90) as respuesta:
+                  lineas = respuesta.read().decode(
+                      "utf-8", errors="replace"
+                  ).splitlines()
+
+              actual = []
+
+              for linea in lineas:
                   linea = linea.strip()
-                  if not linea:
+
+                  if not linea or linea == "#EXTM3U":
                       continue
-                  if linea.startswith("#EXTINF"):
-                      canales.append(linea)
-                  elif not linea.startswith("#"):
-                      if linea not in vistos:
-                          vistos.add(linea)
-                          canales.append(linea)
+
+                  if linea.startswith("#EXTINF:"):
+                      actual = [linea]
+                      continue
+
+                  if actual:
+                      actual.append(linea)
+
+                      if not linea.startswith("#"):
+                          cabecera, separador, nombre = actual[0].partition(",")
+
+                          if grupo_forzado:
+                              if re.search(r'group-title="[^"]*"', cabecera):
+                                  cabecera = re.sub(
+                                      r'group-title="[^"]*"',
+                                      'group-title="Deportes"',
+                                      cabecera
+                                  )
+                              else:
+                                  cabecera += ' group-title="Deportes"'
+
+                              actual[0] = cabecera + separador + nombre
+
+                          grupo = re.search(
+                              r'group-title="([^"]*)"', actual[0]
+                          )
+                          nombre_grupo = grupo.group(1) if grupo else ""
+
+                          clave = (nombre_grupo, linea)
+
+                          if clave not in vistos:
+                              vistos.add(clave)
+                              salida.extend(actual)
+
+                          actual = []
+
+          contenido = "#EXTM3U\n" + "\n".join(salida) + "\n"
 
           with open("lista-combinada.m3u", "w", encoding="utf-8") as f:
-              f.write("#EXTM3U\n")
-              f.write("\n".join(canales) + "\n")
+              f.write(contenido)
 
           os.makedirs("_site", exist_ok=True)
-          with open("_site/lista-combinada.m3u", "w", encoding="utf-8") as f:
-              f.write("#EXTM3U\n")
-              f.write("\n".join(canales) + "\n")
 
-          print(f"Lista generada con {len(vistos)} enlaces.")
+          with open("_site/lista-combinada.m3u", "w", encoding="utf-8") as f:
+              f.write(contenido)
+
+          print("Canales incluidos:", len(vistos))
+          print("Lista combinada generada correctamente.")
           PY
 
       - name: Guardar lista en el repositorio
